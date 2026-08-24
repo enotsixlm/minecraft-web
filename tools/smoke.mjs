@@ -1,9 +1,10 @@
-// 无头冒烟测试:渲染、移动物理、挖/放方块、昼夜、截图
+// 无头冒烟测试:加载、移动、耕地/浇水/种植、睡觉过天、截图
 import { spawn } from 'node:child_process'
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, existsSync, readdirSync } from 'node:fs'
 import { chromium } from 'playwright-core'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { homedir } from 'node:os'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 mkdirSync(join(root, 'shots'), { recursive: true })
@@ -17,7 +18,34 @@ await new Promise((res, rej) => {
   setTimeout(() => rej(new Error('vite start timeout')), 20000)
 })
 
-const shell = join(process.env.HOME, 'Library/Caches/ms-playwright/chromium_headless_shell-1223/chrome-headless-shell-mac-arm64/chrome-headless-shell')
+function findChrome() {
+  const home = homedir()
+  const candidates = [
+    join(home, 'Library/Caches/ms-playwright/chromium_headless_shell-1223/chrome-headless-shell-mac-arm64/chrome-headless-shell'),
+    join(home, '.cache/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-linux64/chrome-headless-shell'),
+    join(home, '.cache/ms-playwright/chromium_headless_shell-1223/chrome-headless-shell-linux64/chrome-headless-shell'),
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+    '/usr/bin/google-chrome',
+  ]
+  const cache = join(home, '.cache/ms-playwright')
+  if (existsSync(cache)) {
+    for (const dir of readdirSync(cache)) {
+      if (!dir.startsWith('chromium_headless_shell')) continue
+      const p = join(cache, dir, 'chrome-headless-shell-linux64', 'chrome-headless-shell')
+      candidates.unshift(p)
+    }
+  }
+  return candidates.find((p) => existsSync(p))
+}
+
+const shell = findChrome()
+if (!shell) {
+  console.error('No chromium found')
+  vite.kill()
+  process.exit(1)
+}
+
 const browser = await chromium.launch({ executablePath: shell, args: ['--enable-unsafe-swiftshader'] })
 let failed = 0
 const check = (name, ok, extra = '') => {
@@ -34,71 +62,76 @@ try {
   await page.goto(`http://localhost:${PORT}/`)
   await page.waitForFunction('window.__READY === true', null, { timeout: 30000 })
   await page.evaluate('game.forceRun()')
-  await page.waitForTimeout(1200)
+  await page.waitForTimeout(800)
 
-  check('页面加载且渲染循环运行', true)
+  check('页面加载且游戏可启动', true)
   check('无 JS 报错', errors.length === 0, errors.slice(0, 3).join(' | '))
 
-  // 世界生成:脚下应有地面
-  const ground = await page.evaluate(`(() => {
-    const p = game.player.pos
-    return game.world.getBlock(Math.floor(p.x), Math.floor(p.y - 0.5), Math.floor(p.z))
+  const tile = await page.evaluate(`(() => {
+    const p = game.player
+    return game.world.get(Math.floor(p.x), Math.floor(p.y))
   })()`)
-  check('出生点脚下有方块', ground !== 0, `block id=${ground}`)
-
-  const meshes = await page.evaluate('game.world.meshCount()')
-  check('chunk 网格已构建', meshes >= 20, `${meshes} chunks`)
+  check('出生点在可站立地块', tile !== 4, `tile=${tile}`)
 
   await page.screenshot({ path: join(root, 'shots/day.png') })
 
-  // 移动物理:前进 1.5s 应位移
-  const p0 = await page.evaluate('({...game.player.pos})')
-  await page.evaluate('game.input.forward = true')
-  await page.waitForTimeout(1500)
-  await page.evaluate('game.input.forward = false')
-  const p1 = await page.evaluate('({...game.player.pos})')
-  const dist = Math.hypot(p1.x - p0.x, p1.z - p0.z)
-  check('WASD 移动物理', dist > 2, `位移 ${dist.toFixed(1)} 格`)
+  // 移动
+  const p0 = await page.evaluate('({ x: game.player.x, y: game.player.y })')
+  await page.evaluate('Object.assign(game.input, { right: true })')
+  await page.waitForTimeout(900)
+  await page.evaluate('Object.assign(game.input, { right: false })')
+  const p1 = await page.evaluate('({ x: game.player.x, y: game.player.y })')
+  const dist = Math.hypot(p1.x - p0.x, p1.y - p0.y)
+  check('WASD 移动', dist > 0.8, `位移 ${dist.toFixed(2)}`)
 
-  // 挖+放:垂直向下看,同一帧内完成避免坠落干扰
-  const digPlace = await page.evaluate(`(() => {
-    game.player.pitch = -1.5
-    const h0 = game.hit()
-    if (!h0) return { err: 'no hit' }
-    const before = h0.id
-    const okBreak = game.breakBlock()
-    const afterBreak = game.world.getBlock(h0.x, h0.y, h0.z)
-    game.selectSlot(3) // 圆石
-    const okPlace = game.placeBlock()
-    const afterPlace = game.world.getBlock(h0.x, h0.y, h0.z)
-    return { before, okBreak, afterBreak, okPlace, afterPlace }
+  // 耕地 + 浇水 + 种植
+  const farm = await page.evaluate(`(() => {
+    const p = game.player
+    // 站到农田里
+    p.x = 10.5
+    p.y = 10.5
+    p.facing = { x: 0, y: 1 }
+    p.selected = 0 // hoe
+    const tx = 10, ty = 11
+    game.world.set(tx, ty, game.TILE.DIRT)
+    game.tryUseTool()
+    const afterTill = game.world.get(tx, ty)
+    p.selected = 1 // can
+    game.tryUseTool()
+    const afterWater = game.world.get(tx, ty)
+    p.selected = 3 // parsnip seeds
+    // ensure seed slot
+    const slot = game.player.inventory[3]
+    game.tryUseTool()
+    const crop = game.world.getCrop(tx, ty)
+    return { afterTill, afterWater, cropId: crop && crop.cropId, slotKind: slot && slot.kind, TILE: { TILLED: 2, WATERED: 3 } }
   })()`)
-  check('挖方块', digPlace.okBreak && digPlace.afterBreak === 0, `before=${digPlace.before} after=${digPlace.afterBreak} ${digPlace.err || ''}`)
-  check('放方块(圆石)', digPlace.okPlace && digPlace.afterPlace === 9, `after=${digPlace.afterPlace}`)
+  check('锄头耕地', farm.afterTill === farm.TILE.TILLED || farm.afterTill === farm.TILE.WATERED, `tile=${farm.afterTill}`)
+  check('喷壶浇水', farm.afterWater === farm.TILE.WATERED, `tile=${farm.afterWater}`)
+  check('播种防风草', farm.cropId === 'parsnip', `crop=${farm.cropId}`)
 
-  // 跳跃
-  const jumped = await page.evaluate(`(async () => {
-    game.player.pitch = 0
-    const y0 = game.player.pos.y
-    game.input.jump = true
-    await new Promise(r => setTimeout(r, 350))
-    game.input.jump = false
-    return game.player.pos.y - y0
-  })()`)
-  check('跳跃', jumped > 0.5, `最高升 ${jumped.toFixed(2)} 格`)
+  // 睡觉过天
+  const day0 = await page.evaluate('game.player.day')
+  await page.evaluate('game.sleep()')
+  await page.waitForTimeout(200)
+  const day1 = await page.evaluate('game.player.day')
+  check('睡觉过天', day1 === day0 + 1, `day ${day0} -> ${day1}`)
 
-  // 夜晚渲染
-  await page.evaluate('game.setDayTime(0.75)')
-  await page.waitForTimeout(400)
   await page.screenshot({ path: join(root, 'shots/night.png') })
-  check('昼夜切换截图', true)
 
-  const fps = await page.evaluate('game.fps')
-  console.log(`ℹ️  无头软渲染 FPS: ${fps}(真机 GPU 会高很多)`)
-  check('最终无 JS 报错', errors.length === 0, errors.slice(0, 3).join(' | '))
+  // 存档
+  const saved = await page.evaluate(`(() => {
+    game.save()
+    const gold = game.player.gold
+    game.player.gold = 0
+    game.load()
+    return game.player.gold === gold
+  })()`)
+  check('存档读写', saved)
+
+  console.log(failed === 0 ? '\n全部通过' : `\n失败 ${failed} 项`)
 } finally {
   await browser.close()
   vite.kill()
 }
-console.log(failed === 0 ? '\n🎉 冒烟测试全部通过' : `\n💥 ${failed} 项失败`)
-process.exit(failed === 0 ? 0 : 1)
+process.exit(failed ? 1 : 0)

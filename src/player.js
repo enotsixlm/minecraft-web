@@ -1,150 +1,204 @@
-// 第一人称玩家:AABB 碰撞 + 重力跳跃 + 游泳 + 创造飞行
-import * as THREE from 'three'
-import { BLOCK, isSolid } from './world.js'
+import { CROPS, TOOLS, seedItem, harvestItem } from './crops.js'
+import { TILE } from './world.js'
 
-const HALF = 0.3       // 碰撞盒半宽
-const PLAYER_H = 1.8
-export const EYE = 1.62
-const GRAVITY = 25
-const JUMP_V = 8.6
-const WALK = 4.3
-const SPRINT = 5.8
-const SNEAK = 1.6
-const FLY = 9
-const EPS = 0.001
+const MAX_ENERGY = 100
 
 export class Player {
-  constructor(world) {
-    this.world = world
-    this.pos = new THREE.Vector3(8.5, 50, 8.5)
-    this.vel = new THREE.Vector3()
-    this.yaw = 0
-    this.pitch = 0
-    this.onGround = false
-    this.inWater = false
-    this.flying = false
+  constructor() {
+    this.x = 6.5
+    this.y = 8.5
+    this.facing = { x: 0, y: 1 }
+    this.energy = MAX_ENERGY
+    this.gold = 500
+    this.day = 1
+    this.minutes = 6 * 60 // 6:00
+    this.inventory = [
+      { ...TOOLS.hoe, qty: 1 },
+      { ...TOOLS.can, qty: 1 },
+      { ...TOOLS.scythe, qty: 1 },
+      { ...seedItem('parsnip'), qty: 15 },
+      { ...seedItem('potato'), qty: 5 },
+      null,
+      null,
+      null,
+    ]
+    this.selected = 0
+    this.anim = 0
+    this.bump = 0
   }
 
-  eyePos() {
-    return new THREE.Vector3(this.pos.x, this.pos.y + EYE, this.pos.z)
+  get maxEnergy() {
+    return MAX_ENERGY
   }
 
-  lookDir() {
-    return new THREE.Vector3(
-      -Math.sin(this.yaw) * Math.cos(this.pitch),
-      Math.sin(this.pitch),
-      -Math.cos(this.yaw) * Math.cos(this.pitch),
-    )
+  selectedItem() {
+    return this.inventory[this.selected] || null
   }
 
-  aabbHits(px, py, pz) {
-    const x0 = Math.floor(px - HALF), x1 = Math.floor(px + HALF)
-    const y0 = Math.floor(py), y1 = Math.floor(py + PLAYER_H)
-    const z0 = Math.floor(pz - HALF), z1 = Math.floor(pz + HALF)
-    const hits = []
-    for (let x = x0; x <= x1; x++)
-      for (let y = y0; y <= y1; y++)
-        for (let z = z0; z <= z1; z++)
-          if (isSolid(this.world.getBlock(x, y, z))) hits.push([x, y, z])
-    return hits
-  }
-
-  intersectsBlock(bx, by, bz) {
-    return bx + 1 > this.pos.x - HALF && bx < this.pos.x + HALF &&
-      by + 1 > this.pos.y && by < this.pos.y + PLAYER_H &&
-      bz + 1 > this.pos.z - HALF && bz < this.pos.z + HALF
-  }
-
-  update(dt, input) {
-    const headBlock = this.world.getBlock(Math.floor(this.pos.x), Math.floor(this.pos.y + 1.2), Math.floor(this.pos.z))
-    const feetBlock = this.world.getBlock(Math.floor(this.pos.x), Math.floor(this.pos.y + 0.4), Math.floor(this.pos.z))
-    this.inWater = headBlock === BLOCK.WATER || feetBlock === BLOCK.WATER
-
-    // 水平意图方向(相对朝向)
-    let mx = 0, mz = 0
-    if (input.forward) mz -= 1
-    if (input.back) mz += 1
-    if (input.left) mx -= 1
-    if (input.right) mx += 1
-    const len = Math.hypot(mx, mz) || 1
-    mx /= len; mz /= len
-    const sin = Math.sin(this.yaw), cos = Math.cos(this.yaw)
-    const wx = mx * cos - mz * sin
-    const wz = mz * cos + mx * sin
-
-    let speed = input.sprint ? SPRINT : input.sneak ? SNEAK : WALK
-    if (this.flying) speed = FLY
-    else if (this.inWater) speed *= 0.55
-
-    if (this.flying) {
-      this.vel.x = wx * speed
-      this.vel.z = wz * speed
-      this.vel.y = (input.jump ? FLY : 0) + (input.sneak ? -FLY : 0)
-      if (!input.jump && !input.sneak) this.vel.y = 0
-    } else if (this.inWater) {
-      this.vel.x = wx * speed
-      this.vel.z = wz * speed
-      this.vel.y = input.jump ? 3.2 : Math.max(this.vel.y - GRAVITY * 0.25 * dt, -2.2)
-    } else {
-      // 地面直接给速度,空中保留部分操控,手感接近 MC
-      const control = this.onGround ? 1 : 0.35
-      this.vel.x += (wx * speed - this.vel.x) * control
-      this.vel.z += (wz * speed - this.vel.z) * control
-      this.vel.y -= GRAVITY * dt
-      if (this.vel.y < -40) this.vel.y = -40
-      if (input.jump && this.onGround) {
-        this.vel.y = JUMP_V
-        this.onGround = false
+  addItem(item, qty = 1) {
+    // stack same id
+    for (const slot of this.inventory) {
+      if (slot && slot.id === item.id && slot.kind !== 'tool') {
+        slot.qty = (slot.qty || 0) + qty
+        return true
       }
     }
-
-    this.moveAxis(0, this.vel.x * dt)
-    this.moveAxis(1, this.vel.y * dt)
-    this.moveAxis(2, this.vel.z * dt)
-
-    if (this.pos.y < -10) { // 掉出世界兜底
-      this.pos.y = 50
-      this.vel.set(0, 0, 0)
-    }
-  }
-
-  moveAxis(axis, amount) {
-    if (!amount) return
-    const p = this.pos
-    if (axis === 0) p.x += amount
-    else if (axis === 1) { p.y += amount; if (amount < 0) this.onGround = false }
-    else p.z += amount
-
-    for (const [bx, by, bz] of this.aabbHits(p.x, p.y, p.z)) {
-      if (axis === 0) {
-        p.x = amount > 0 ? bx - HALF - EPS : bx + 1 + HALF + EPS
-        this.vel.x = 0
-      } else if (axis === 1) {
-        if (amount > 0) { p.y = by - PLAYER_H - EPS } else { p.y = by + 1 + EPS; this.onGround = true }
-        this.vel.y = 0
-      } else {
-        p.z = amount > 0 ? bz - HALF - EPS : bz + 1 + HALF + EPS
-        this.vel.z = 0
+    for (let i = 0; i < this.inventory.length; i++) {
+      if (!this.inventory[i]) {
+        this.inventory[i] = { ...item, qty }
+        return true
       }
     }
+    return false
   }
-}
 
-// 体素 DDA 射线:返回命中的方块与法线
-export function raycastVoxel(world, origin, dir, maxDist) {
-  let x = Math.floor(origin.x), y = Math.floor(origin.y), z = Math.floor(origin.z)
-  const stepX = dir.x > 0 ? 1 : -1, stepY = dir.y > 0 ? 1 : -1, stepZ = dir.z > 0 ? 1 : -1
-  const tdx = Math.abs(1 / dir.x), tdy = Math.abs(1 / dir.y), tdz = Math.abs(1 / dir.z)
-  let tx = dir.x !== 0 ? Math.abs((stepX > 0 ? x + 1 - origin.x : origin.x - x)) * tdx : Infinity
-  let ty = dir.y !== 0 ? Math.abs((stepY > 0 ? y + 1 - origin.y : origin.y - y)) * tdy : Infinity
-  let tz = dir.z !== 0 ? Math.abs((stepZ > 0 ? z + 1 - origin.z : origin.z - z)) * tdz : Infinity
-  let t = 0, normal = [0, 0, 0]
-  while (t <= maxDist) {
-    if (tx < ty && tx < tz) { x += stepX; t = tx; tx += tdx; normal = [-stepX, 0, 0] }
-    else if (ty < tz) { y += stepY; t = ty; ty += tdy; normal = [0, -stepY, 0] }
-    else { z += stepZ; t = tz; tz += tdz; normal = [0, 0, -stepZ] }
-    const id = world.getBlock(x, y, z)
-    if (isSolid(id)) return { x, y, z, id, normal, dist: t }
+  consumeSelected(n = 1) {
+    const it = this.selectedItem()
+    if (!it || it.kind === 'tool') return false
+    it.qty -= n
+    if (it.qty <= 0) this.inventory[this.selected] = null
+    return true
   }
-  return null
+
+  spendEnergy(n) {
+    if (this.energy < n) return false
+    this.energy -= n
+    return true
+  }
+
+  restoreEnergy() {
+    this.energy = MAX_ENERGY
+  }
+
+  targetTile() {
+    const tx = Math.floor(this.x + this.facing.x * 0.85)
+    const ty = Math.floor(this.y + this.facing.y * 0.85)
+    return { x: tx, y: ty }
+  }
+
+  tryUse(world) {
+    const item = this.selectedItem()
+    if (!item) return { ok: false, msg: '空手无物' }
+    const { x, y } = this.targetTile()
+    this.bump = 1
+
+    if (item.id === 'hoe') {
+      if (!this.spendEnergy(2)) return { ok: false, msg: '体力不足' }
+      if (world.till(x, y)) return { ok: true, msg: '翻土完成', sfx: 'hoe' }
+      return { ok: false, msg: '这里不能耕地', refund: 2 }
+    }
+
+    if (item.id === 'can') {
+      if (!this.spendEnergy(2)) return { ok: false, msg: '体力不足' }
+      if (world.water(x, y)) return { ok: true, msg: '浇水啦', sfx: 'water' }
+      return { ok: false, msg: '这里不需要浇水', refund: 2 }
+    }
+
+    if (item.id === 'scythe') {
+      const harvested = world.harvest(x, y)
+      if (harvested) {
+        if (!this.spendEnergy(1)) return { ok: false, msg: '体力不足' }
+        const ok = this.addItem(harvestItem(harvested.cropId), harvested.qty)
+        if (!ok) {
+          this.energy += 1
+          return { ok: false, msg: '背包满了' }
+        }
+        const name = CROPS[harvested.cropId].name
+        return { ok: true, msg: `收获了 ${name}`, sfx: 'harvest' }
+      }
+      if (world.clearWeed(x, y)) {
+        if (!this.spendEnergy(1)) return { ok: false, msg: '体力不足' }
+        return { ok: true, msg: '杂草清除', sfx: 'hoe' }
+      }
+      return { ok: false, msg: '没有可收割的' }
+    }
+
+    if (item.kind === 'seed') {
+      if (!this.spendEnergy(1)) return { ok: false, msg: '体力不足' }
+      if (world.plant(x, y, item.cropId)) {
+        this.consumeSelected(1)
+        return { ok: true, msg: `种下了${CROPS[item.cropId].name}`, sfx: 'plant' }
+      }
+      return { ok: false, msg: '需要已翻好的土地', refund: 1 }
+    }
+
+    if (item.kind === 'crop') {
+      return { ok: false, msg: '去皮埃尔商店卖掉作物吧' }
+    }
+
+    return { ok: false, msg: '无法使用' }
+  }
+
+  finishAction(result) {
+    if (result && result.refund) this.energy = Math.min(MAX_ENERGY, this.energy + result.refund)
+  }
+
+  buySeed(cropId) {
+    const c = CROPS[cropId]
+    if (!c) return { ok: false, msg: '没有这种种子' }
+    if (this.gold < c.seedPrice) return { ok: false, msg: '金币不够' }
+    if (!this.addItem(seedItem(cropId), 1)) return { ok: false, msg: '背包满了' }
+    this.gold -= c.seedPrice
+    return { ok: true, msg: `买到了${c.seedName}` }
+  }
+
+  sellAllCrops() {
+    let earned = 0
+    let count = 0
+    for (let i = 0; i < this.inventory.length; i++) {
+      const it = this.inventory[i]
+      if (it && it.kind === 'crop') {
+        const price = CROPS[it.cropId].sellPrice
+        earned += price * it.qty
+        count += it.qty
+        this.inventory[i] = null
+      }
+    }
+    this.gold += earned
+    return { earned, count }
+  }
+
+  nearBed(world) {
+    const cx = Math.floor(this.x)
+    const cy = Math.floor(this.y)
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (world.get(cx + dx, cy + dy) === TILE.BED) return true
+      }
+    }
+    return false
+  }
+
+  nearShop(world) {
+    const cx = Math.floor(this.x)
+    const cy = Math.floor(this.y)
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (world.get(cx + dx, cy + dy) === TILE.SHOP || world.get(cx + dx, cy + dy) === TILE.FLOOR) {
+          // shop area roughly x>=24
+          if (cx + dx >= 24 && cy + dy <= 5) return true
+        }
+      }
+    }
+    // simpler: standing on path near shop door
+    return cx >= 25 && cx <= 27 && cy >= 4 && cy <= 6
+  }
+
+  serialize() {
+    return {
+      x: this.x,
+      y: this.y,
+      facing: this.facing,
+      energy: this.energy,
+      gold: this.gold,
+      day: this.day,
+      minutes: this.minutes,
+      inventory: this.inventory,
+      selected: this.selected,
+    }
+  }
+
+  load(data) {
+    Object.assign(this, data)
+  }
 }

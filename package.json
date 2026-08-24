@@ -1,5 +1,5 @@
 {
-  "name": "minecraft-web",
+  "name": "stardew-farm-web",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -8,9 +8,6 @@
     "build": "vite build",
     "preview": "vite preview",
     "smoke": "node tools/smoke.mjs"
-  },
-  "dependencies": {
-    "three": "^0.169.0"
   },
   "devDependencies": {
     "playwright-core": "^1.61.1",

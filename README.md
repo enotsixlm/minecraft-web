@@ -1,38 +1,41 @@
-# Minecraft 网页复刻版
+# 星露农场（网页版）
 
-three.js + vite 的体素 Minecraft,零外部资产(贴图全部 canvas 程序生成)。
-
-**在线试玩:https://enotsixlm.github.io/minecraft-web/**
-
-![白天](shots/day.png)
+Canvas 2D 的星露谷物语风格农场小游戏：耕地、浇水、播种、收获、开店买卖、睡觉过天。零外部图片资源，像素风程序绘制。
 
 ## 运行
 
 ```bash
 npm install
 npm run dev      # http://localhost:5173
-npm run smoke    # 无头冒烟测试(渲染/移动/挖放方块/昼夜 + 截图到 shots/)
+npm run smoke    # 无头冒烟测试 + 截图到 shots/
 npm run build    # 产物到 dist/
 ```
 
-## 已还原的经典元素
+## 操作
 
-- 程序化无限地形:草原 / 山地 / 沙滩 / 海洋,16×16 chunk 流式加载,种子确定性生成
-- 洞穴(3D 噪声雕刻)、橡树、基岩层
-- 挖方块 / 放方块:体素 DDA 射线拾取 + 黑框高亮,长按连挖
-- 9 格快捷栏(1-9 / 滚轮切换),草方块、泥土、石头、圆石、木板、原木、树叶、沙子、玻璃
-- 第一人称物理:重力、跳跃、AABB 碰撞、水中游泳、双击空格创造飞行、Shift 潜行、Ctrl 疾跑
-- 经典方块光影:面朝向明暗(顶 1.0 / 侧 0.6~0.8 / 底 0.5)+ 顶点 AO,烘焙进网格
-- 昼夜循环(4 分钟一天)+ 太阳月亮 + 漂移云层 + 距离雾
-- 半透明水面(水面下沉 1/8 格)、玻璃镂空渲染
-- WebAudio 合成挖掘/放置音效,F3 调试信息
-- localStorage 存档(种子 + 所有方块改动),菜单里可清档重开
+| 按键 | 作用 |
+|------|------|
+| WASD / 方向键 | 移动 |
+| 空格 / 鼠标左键 | 使用当前工具或种子 |
+| 1–8 | 切换快捷栏 |
+| E | 在杂货店门口打开皮埃尔商店 |
+| Enter | 在床边睡觉，进入下一天 |
+| Esc | 菜单 / 关闭商店 |
+
+## 玩法
+
+- 用**锄头**把泥土翻成耕地，**喷壶**浇水，再播下种子
+- 作物只有浇过水才会在过夜后生长；成熟后用**镰刀**收获
+- 走到右上角杂货店买种子，或一键卖出背包里的作物换金币
+- 体力会随劳作下降，睡觉后恢复；时间会流逝，凌晨两点会强制睡觉
+- 进度自动写入 `localStorage`
 
 ## 结构
 
-- `src/noise.js` 种子哈希 / 值噪声 / fbm
-- `src/textures.js` 16×16 像素贴图程序生成 → 4×4 图集
-- `src/world.js` chunk 数据生成(地形/洞穴/树)+ 网格构建(面剔除/AO)
-- `src/player.js` 玩家物理 + 体素射线
-- `src/main.js` 主循环 / 输入 / 昼夜 / HUD / 存档
-- `tools/smoke.mjs` playwright 无头验证
+- `src/crops.js` — 作物与商店商品
+- `src/world.js` — 地图、地块、作物生长
+- `src/player.js` — 玩家、背包、工具逻辑
+- `src/render.js` — 像素风渲染与粒子
+- `src/audio.js` — WebAudio 合成音效
+- `src/main.js` — 主循环、HUD、存档
+- `tools/smoke.mjs` — Playwright 冒烟测试

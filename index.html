@@ -3,81 +3,277 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Minecraft 网页版</title>
+  <title>星露谷 · 网页农场</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=ZCOOL+KuaiLe&family=Noto+Sans+SC:wght@400;600;700&display=swap" rel="stylesheet" />
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
-    body { font-family: "Courier New", monospace; user-select: none; }
-    #app { position: fixed; inset: 0; }
-    canvas { display: block; image-rendering: auto; }
-
-    #crosshair {
-      position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
-      color: rgba(255,255,255,0.85); font-size: 22px; pointer-events: none;
-      text-shadow: 0 0 2px #000; z-index: 5;
+    :root {
+      --soil: #5c3a21;
+      --leaf: #3d7a3a;
+      --sky: #7ec8e3;
+      --sun: #f4d35e;
+      --ink: #2b2118;
+      --cream: #fff4d6;
+      --panel: rgba(36, 24, 14, 0.82);
+      --accent: #d97706;
+      --water: #3a7ca5;
     }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #1a120c; }
+    body {
+      font-family: "Noto Sans SC", sans-serif;
+      color: var(--cream);
+      user-select: none;
+    }
+    #app { position: fixed; inset: 0; }
+    #game {
+      display: block;
+      width: 100%;
+      height: 100%;
+      image-rendering: pixelated;
+      background: #1a120c;
+      cursor: crosshair;
+    }
+
+    #hud {
+      position: fixed; inset: 0; pointer-events: none; z-index: 5;
+    }
+    #topbar {
+      position: absolute; left: 16px; top: 14px;
+      display: flex; gap: 12px; align-items: stretch;
+      flex-wrap: wrap;
+    }
+    .stat {
+      background: var(--panel);
+      border: 2px solid #8b5a2b;
+      border-radius: 10px;
+      padding: 8px 12px;
+      min-width: 110px;
+      box-shadow: 0 4px 0 #1a1008;
+    }
+    .stat .label { font-size: 11px; opacity: 0.75; letter-spacing: 0.04em; }
+    .stat .value { font-size: 18px; font-weight: 700; margin-top: 2px; }
+    .bar {
+      margin-top: 6px; height: 10px; background: #2a1a10;
+      border-radius: 999px; overflow: hidden; border: 1px solid #5c3a21;
+    }
+    .bar > i {
+      display: block; height: 100%; width: 100%;
+      background: linear-gradient(90deg, #59a14f, #8fd17a);
+      transform-origin: left center;
+      transition: transform 0.15s linear;
+    }
+    .bar.gold > i { background: linear-gradient(90deg, #c9891a, var(--sun)); }
+
     #hotbar {
-      position: fixed; left: 50%; bottom: 12px; transform: translateX(-50%);
-      display: flex; gap: 2px; z-index: 5; pointer-events: none;
-      background: rgba(0,0,0,0.35); padding: 3px; border: 2px solid rgba(0,0,0,0.6);
+      position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%);
+      display: flex; gap: 6px; pointer-events: none;
+      background: var(--panel);
+      padding: 8px;
+      border: 2px solid #8b5a2b;
+      border-radius: 14px;
+      box-shadow: 0 6px 0 #1a1008;
     }
     .slot {
-      width: 46px; height: 46px; border: 2px solid #555;
-      background: rgba(30,30,30,0.6); position: relative;
-      display: flex; align-items: center; justify-content: center;
+      width: 58px; height: 58px;
+      border: 2px solid #6b4423;
+      border-radius: 10px;
+      background: rgba(80, 48, 24, 0.55);
+      position: relative;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 2px;
     }
-    .slot.selected { border-color: #fff; box-shadow: 0 0 0 2px #fff inset; }
-    .slot canvas { width: 36px; height: 36px; image-rendering: pixelated; }
-    .slot .num { position: absolute; left: 2px; top: 0; font-size: 10px; color: #ccc; }
-    #blockname {
-      position: fixed; left: 50%; bottom: 72px; transform: translateX(-50%);
-      color: #fff; font-size: 14px; text-shadow: 1px 1px 0 #000;
-      z-index: 5; pointer-events: none; opacity: 0; transition: opacity 0.5s;
+    .slot.selected {
+      border-color: var(--sun);
+      box-shadow: 0 0 0 2px rgba(244, 211, 94, 0.45) inset;
+      background: rgba(120, 72, 28, 0.7);
     }
-    #debug {
-      position: fixed; left: 8px; top: 8px; color: #fff; font-size: 12px;
-      text-shadow: 1px 1px 0 #000; z-index: 5; pointer-events: none;
-      white-space: pre; display: none; background: rgba(0,0,0,0.3); padding: 4px 6px;
+    .slot .icon { font-size: 22px; line-height: 1; }
+    .slot .name { font-size: 10px; opacity: 0.9; }
+    .slot .qty {
+      position: absolute; right: 4px; bottom: 2px;
+      font-size: 11px; font-weight: 700; color: #fff;
+      text-shadow: 1px 1px 0 #000;
     }
-    #menu {
-      position: fixed; inset: 0; z-index: 10;
-      background: rgba(10, 14, 20, 0.82);
+    .slot .key {
+      position: absolute; left: 4px; top: 2px;
+      font-size: 10px; color: #d6c2a0;
+    }
+
+    #toast {
+      position: absolute; left: 50%; top: 18%;
+      transform: translateX(-50%);
+      background: var(--panel);
+      border: 2px solid #8b5a2b;
+      border-radius: 10px;
+      padding: 10px 18px;
+      font-size: 15px;
+      opacity: 0;
+      transition: opacity 0.25s;
+      pointer-events: none;
+      white-space: nowrap;
+    }
+    #toast.show { opacity: 1; }
+
+    #hint {
+      position: absolute; right: 16px; bottom: 18px;
+      background: var(--panel);
+      border: 2px solid #8b5a2b;
+      border-radius: 12px;
+      padding: 10px 14px;
+      font-size: 12px;
+      line-height: 1.7;
+      color: #e8d7b8;
+      max-width: 260px;
+    }
+
+    #menu, #shop, #sleep {
+      position: fixed; inset: 0; z-index: 20;
+      background:
+        radial-gradient(ellipse at 30% 20%, rgba(126, 200, 227, 0.25), transparent 50%),
+        radial-gradient(ellipse at 70% 80%, rgba(61, 122, 58, 0.28), transparent 45%),
+        linear-gradient(160deg, #1e3a2f 0%, #243016 40%, #3a2414 100%);
       display: flex; flex-direction: column; align-items: center; justify-content: center;
-      color: #fff; text-align: center; gap: 18px;
+      gap: 16px; text-align: center; padding: 24px;
     }
-    #menu h1 {
-      font-size: 44px; letter-spacing: 4px; color: #fff;
-      text-shadow: 3px 3px 0 #3f3f3f;
+    #menu.hidden, #shop.hidden, #sleep.hidden { display: none; }
+    #menu h1, #shop h1, #sleep h1 {
+      font-family: "ZCOOL KuaiLe", cursive;
+      font-size: clamp(42px, 8vw, 72px);
+      color: var(--cream);
+      text-shadow: 0 4px 0 #5c3a21, 0 8px 24px rgba(0,0,0,0.35);
+      letter-spacing: 0.06em;
     }
-    #menu .sub { color: #ffff55; font-size: 14px; }
-    #menu .keys { color: #bbb; font-size: 13px; line-height: 1.9; }
-    #menu button {
-      font-family: inherit; font-size: 18px; padding: 10px 46px;
-      background: #6f6f6f; color: #fff; border: 2px solid;
-      border-color: #a8a8a8 #4a4a4a #4a4a4a #a8a8a8;
-      cursor: pointer; text-shadow: 1px 1px 0 #333;
+    #menu .sub, #shop .sub, #sleep .sub {
+      color: #c9e6a8;
+      font-size: 16px;
+      max-width: 520px;
+      line-height: 1.6;
     }
-    #menu button:hover { background: #7f8fbf; }
-    #menu button.small { font-size: 13px; padding: 6px 20px; background: #555; }
-    #menu.hidden { display: none; }
+    .btn-row { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+    button.game-btn {
+      font-family: inherit;
+      font-size: 16px;
+      font-weight: 700;
+      padding: 12px 28px;
+      border-radius: 999px;
+      border: 2px solid #f0d9a0;
+      background: linear-gradient(180deg, #e8a54b, #c56a1a);
+      color: #2b1608;
+      cursor: pointer;
+      box-shadow: 0 5px 0 #7a3f0e;
+      pointer-events: auto;
+    }
+    button.game-btn:hover { filter: brightness(1.08); transform: translateY(-1px); }
+    button.game-btn:active { transform: translateY(3px); box-shadow: 0 2px 0 #7a3f0e; }
+    button.game-btn.secondary {
+      background: linear-gradient(180deg, #6b8f4e, #3f6a32);
+      border-color: #c9e6a8;
+      color: #f4ffe8;
+      box-shadow: 0 5px 0 #2a451f;
+    }
+    button.game-btn.ghost {
+      background: rgba(255,244,214,0.12);
+      color: var(--cream);
+      border-color: rgba(255,244,214,0.35);
+      box-shadow: none;
+    }
+    #shop .catalog {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+      width: min(720px, 92vw);
+      pointer-events: auto;
+    }
+    .shop-item {
+      background: rgba(24, 16, 10, 0.72);
+      border: 2px solid #8b5a2b;
+      border-radius: 14px;
+      padding: 14px;
+      text-align: left;
+      cursor: pointer;
+      transition: border-color 0.15s, transform 0.15s;
+    }
+    .shop-item:hover { border-color: var(--sun); transform: translateY(-2px); }
+    .shop-item .title { font-size: 16px; font-weight: 700; }
+    .shop-item .desc { font-size: 12px; color: #d6c2a0; margin: 6px 0 10px; line-height: 1.45; }
+    .shop-item .price { color: var(--sun); font-weight: 700; }
+
+    #sleep .summary {
+      background: rgba(24, 16, 10, 0.72);
+      border: 2px solid #8b5a2b;
+      border-radius: 16px;
+      padding: 18px 22px;
+      width: min(420px, 92vw);
+      text-align: left;
+      line-height: 1.7;
+      color: #e8d7b8;
+    }
   </style>
 </head>
 <body>
-  <div id="app"></div>
-  <div id="crosshair">+</div>
-  <div id="blockname"></div>
-  <div id="hotbar"></div>
-  <div id="debug"></div>
-  <div id="menu">
-    <h1>MINECRAFT</h1>
-    <div class="sub">网页复刻版 · 无限方块世界</div>
-    <button id="play">开始游戏</button>
-    <button id="reset" class="small">清除存档并重新生成世界</button>
-    <div class="keys">
-      WASD 移动 · 空格 跳跃 / 双击空格 飞行 · Shift 潜行/下降 · Ctrl 疾跑<br/>
-      鼠标左键 破坏方块 · 右键 放置方块 · 1-9 / 滚轮 选择方块 · F3 调试信息 · Esc 菜单
+  <div id="app">
+    <canvas id="game" width="960" height="540"></canvas>
+  </div>
+
+  <div id="hud">
+    <div id="topbar">
+      <div class="stat">
+        <div class="label">金币</div>
+        <div class="value" id="gold">0 G</div>
+      </div>
+      <div class="stat">
+        <div class="label">体力</div>
+        <div class="value" id="energy-text">100 / 100</div>
+        <div class="bar"><i id="energy-bar"></i></div>
+      </div>
+      <div class="stat">
+        <div class="label">日期</div>
+        <div class="value" id="day">春日 1</div>
+      </div>
+      <div class="stat">
+        <div class="label">时间</div>
+        <div class="value" id="clock">6:00</div>
+      </div>
+    </div>
+    <div id="toast"></div>
+    <div id="hotbar"></div>
+    <div id="hint">
+      WASD 移动 · 空格 / 左键 使用工具<br/>
+      1–8 切换物品 · E 皮埃尔商店<br/>
+      走到床边按 Enter 睡觉过天<br/>
+      Esc 菜单 · 存档自动保存
     </div>
   </div>
+
+  <div id="menu">
+    <h1>星露农场</h1>
+    <p class="sub">开垦土地、浇水、播种、收获，把农作物卖给皮埃尔，过上悠闲的农场生活。</p>
+    <div class="btn-row">
+      <button class="game-btn" id="btn-play">开始耕种</button>
+      <button class="game-btn secondary" id="btn-continue">继续游戏</button>
+    </div>
+    <button class="game-btn ghost" id="btn-reset">清除存档并重开</button>
+  </div>
+
+  <div id="shop" class="hidden">
+    <h1>皮埃尔杂货店</h1>
+    <p class="sub">用金币购买种子。种下去、浇好水，第二天作物就会长大一点。</p>
+    <div class="catalog" id="shop-catalog"></div>
+    <div class="btn-row">
+      <button class="game-btn secondary" id="btn-sell-all">一键卖出背包作物</button>
+      <button class="game-btn ghost" id="btn-close-shop">离开商店</button>
+    </div>
+  </div>
+
+  <div id="sleep" class="hidden">
+    <h1>晚安</h1>
+    <div class="summary" id="sleep-summary"></div>
+    <button class="game-btn" id="btn-wake">起床</button>
+  </div>
+
   <script type="module" src="/src/main.js"></script>
 </body>
 </html>
