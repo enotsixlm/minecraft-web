@@ -2,6 +2,8 @@
 
 Canvas 2D 的星露谷物语风格农场小游戏：耕地、浇水、播种、收获、出货箱、采集、开店买卖、睡觉过天。零外部图片资源，像素风程序绘制。
 
+**在线试玩：https://enotsixlm.github.io/minecraft-web/**
+
 ## 运行
 
 ```bash
