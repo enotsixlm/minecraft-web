@@ -1,15 +1,27 @@
-// 无头冒烟测试:加载、移动、耕地/浇水/种植、睡觉过天、截图
+// 无头冒烟测试:加载、移动、耕地/浇水/种植、出货、睡觉过天、截图
 import { spawn } from 'node:child_process'
 import { mkdirSync, existsSync, readdirSync } from 'node:fs'
 import { chromium } from 'playwright-core'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
+import { createServer } from 'node:net'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 mkdirSync(join(root, 'shots'), { recursive: true })
 
-const PORT = 5197
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const s = createServer()
+    s.listen(0, () => {
+      const { port } = s.address()
+      s.close(() => resolve(port))
+    })
+    s.on('error', reject)
+  })
+}
+
+const PORT = await freePort()
 const vite = spawn('npx', ['vite', '--port', String(PORT), '--strictPort'], { cwd: root, stdio: 'pipe' })
 await new Promise((res, rej) => {
   vite.stdout.on('data', (d) => { if (String(d).includes('Local:')) res() })
@@ -20,22 +32,20 @@ await new Promise((res, rej) => {
 
 function findChrome() {
   const home = homedir()
-  const candidates = [
-    join(home, 'Library/Caches/ms-playwright/chromium_headless_shell-1223/chrome-headless-shell-mac-arm64/chrome-headless-shell'),
-    join(home, '.cache/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-linux64/chrome-headless-shell'),
-    join(home, '.cache/ms-playwright/chromium_headless_shell-1223/chrome-headless-shell-linux64/chrome-headless-shell'),
-    '/usr/bin/chromium',
-    '/usr/bin/chromium-browser',
-    '/usr/bin/google-chrome',
-  ]
+  const candidates = []
   const cache = join(home, '.cache/ms-playwright')
   if (existsSync(cache)) {
     for (const dir of readdirSync(cache)) {
       if (!dir.startsWith('chromium_headless_shell')) continue
-      const p = join(cache, dir, 'chrome-headless-shell-linux64', 'chrome-headless-shell')
-      candidates.unshift(p)
+      candidates.push(join(cache, dir, 'chrome-headless-shell-linux64', 'chrome-headless-shell'))
     }
   }
+  candidates.push(
+    join(home, 'Library/Caches/ms-playwright/chromium_headless_shell-1223/chrome-headless-shell-mac-arm64/chrome-headless-shell'),
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+    '/usr/bin/google-chrome',
+  )
   return candidates.find((p) => existsSync(p))
 }
 
@@ -75,51 +85,54 @@ try {
 
   await page.screenshot({ path: join(root, 'shots/day.png') })
 
-  // 移动
   const p0 = await page.evaluate('({ x: game.player.x, y: game.player.y })')
-  await page.evaluate('Object.assign(game.input, { right: true })')
+  await page.evaluate('Object.assign(game.input, { down: true })')
   await page.waitForTimeout(900)
-  await page.evaluate('Object.assign(game.input, { right: false })')
+  await page.evaluate('Object.assign(game.input, { down: false })')
   const p1 = await page.evaluate('({ x: game.player.x, y: game.player.y })')
   const dist = Math.hypot(p1.x - p0.x, p1.y - p0.y)
   check('WASD 移动', dist > 0.8, `位移 ${dist.toFixed(2)}`)
 
-  // 耕地 + 浇水 + 种植
   const farm = await page.evaluate(`(() => {
     const p = game.player
-    // 站到农田里
     p.x = 10.5
     p.y = 10.5
     p.facing = { x: 0, y: 1 }
-    p.selected = 0 // hoe
+    p.selected = 0
     const tx = 10, ty = 11
     game.world.set(tx, ty, game.TILE.DIRT)
     game.tryUseTool()
     const afterTill = game.world.get(tx, ty)
-    p.selected = 1 // can
+    p.selected = 1
     game.tryUseTool()
     const afterWater = game.world.get(tx, ty)
-    p.selected = 3 // parsnip seeds
-    // ensure seed slot
-    const slot = game.player.inventory[3]
+    p.selected = 3
     game.tryUseTool()
     const crop = game.world.getCrop(tx, ty)
-    return { afterTill, afterWater, cropId: crop && crop.cropId, slotKind: slot && slot.kind, TILE: { TILLED: 2, WATERED: 3 } }
+    return { afterTill, afterWater, cropId: crop && crop.cropId, TILLED: 2, WATERED: 3 }
   })()`)
-  check('锄头耕地', farm.afterTill === farm.TILE.TILLED || farm.afterTill === farm.TILE.WATERED, `tile=${farm.afterTill}`)
-  check('喷壶浇水', farm.afterWater === farm.TILE.WATERED, `tile=${farm.afterWater}`)
+  check('锄头耕地', farm.afterTill === farm.TILLED || farm.afterTill === farm.WATERED, `tile=${farm.afterTill}`)
+  check('喷壶浇水', farm.afterWater === farm.WATERED, `tile=${farm.afterWater}`)
   check('播种防风草', farm.cropId === 'parsnip', `crop=${farm.cropId}`)
 
-  // 睡觉过天
-  const day0 = await page.evaluate('game.player.day')
-  await page.evaluate('game.sleep()')
-  await page.waitForTimeout(200)
-  const day1 = await page.evaluate('game.player.day')
-  check('睡觉过天', day1 === day0 + 1, `day ${day0} -> ${day1}`)
+  const ship = await page.evaluate(`(() => {
+    const p = game.player
+    // 放一个作物进背包并装入出货箱
+    p.inventory[5] = { id: 'crop_parsnip', cropId: 'parsnip', name: '防风草', kind: 'crop', qty: 2, sellPrice: 50, icon: 'crop', color: '#e8b84a' }
+    p.selected = 5
+    p.x = 8.5
+    p.y = 8.2
+    p.facing = { x: 0, y: -1 }
+    game.tryUseTool()
+    const gold0 = p.gold
+    game.sleep()
+    return { shipped: game.world.shipping.length === 0, goldDelta: p.gold - gold0, day: p.day }
+  })()`)
+  check('出货箱过夜结算', ship.shipped && ship.goldDelta === 100, `ΔG=${ship.goldDelta}`)
+  check('睡觉过天', ship.day >= 2, `day=${ship.day}`)
 
   await page.screenshot({ path: join(root, 'shots/night.png') })
 
-  // 存档
   const saved = await page.evaluate(`(() => {
     game.save()
     const gold = game.player.gold

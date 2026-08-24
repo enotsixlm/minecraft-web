@@ -1,4 +1,4 @@
-import { CROPS, TOOLS, seedItem, harvestItem } from './crops.js'
+import { CROPS, TOOLS, seedItem, harvestItem, forageItem } from './crops.js'
 import { TILE } from './world.js'
 
 const MAX_ENERGY = 100
@@ -11,7 +11,7 @@ export class Player {
     this.energy = MAX_ENERGY
     this.gold = 500
     this.day = 1
-    this.minutes = 6 * 60 // 6:00
+    this.minutes = 6 * 60
     this.inventory = [
       { ...TOOLS.hoe, qty: 1 },
       { ...TOOLS.can, qty: 1 },
@@ -25,6 +25,7 @@ export class Player {
     this.selected = 0
     this.anim = 0
     this.bump = 0
+    this.moving = false
   }
 
   get maxEnergy() {
@@ -36,7 +37,6 @@ export class Player {
   }
 
   addItem(item, qty = 1) {
-    // stack same id
     for (const slot of this.inventory) {
       if (slot && slot.id === item.id && slot.kind !== 'tool') {
         slot.qty = (slot.qty || 0) + qty
@@ -78,12 +78,42 @@ export class Player {
 
   tryUse(world) {
     const item = this.selectedItem()
-    if (!item) return { ok: false, msg: '空手无物' }
     const { x, y } = this.targetTile()
     this.bump = 1
 
+    // 采集物：空手或任意物品都可拾取
+    const forageId = world.getForage(x, y)
+    if (forageId) {
+      if (!this.spendEnergy(1)) return { ok: false, msg: '体力不足' }
+      const picked = world.pickForage(x, y)
+      if (!this.addItem(forageItem(picked), 1)) {
+        this.energy += 1
+        world.forage.set(world.key(x, y), picked)
+        return { ok: false, msg: '背包满了' }
+      }
+      return { ok: true, msg: `捡到了${forageItem(picked).name}`, sfx: 'harvest' }
+    }
+
+    // 出货箱：放入当前选中的可售物品
+    if (world.get(x, y) === TILE.SHIPPING) {
+      if (!item || item.kind !== 'crop') {
+        const pending = world.shipping.reduce((n, s) => n + s.qty, 0)
+        return {
+          ok: false,
+          msg: pending ? `出货箱里有 ${pending} 件，睡后结算` : '对着出货箱放入收获物',
+        }
+      }
+      const qty = item.qty || 1
+      world.shipItem(item, qty)
+      this.inventory[this.selected] = null
+      return { ok: true, msg: `装入出货箱 ×${qty}（睡后到账）`, sfx: 'coin' }
+    }
+
+    if (!item) return { ok: false, msg: '空手无物' }
+
     if (item.id === 'hoe') {
       if (!this.spendEnergy(2)) return { ok: false, msg: '体力不足' }
+      if (world.breakRock(x, y)) return { ok: true, msg: '石头敲碎了', sfx: 'hoe' }
       if (world.till(x, y)) return { ok: true, msg: '翻土完成', sfx: 'hoe' }
       return { ok: false, msg: '这里不能耕地', refund: 2 }
     }
@@ -103,8 +133,7 @@ export class Player {
           this.energy += 1
           return { ok: false, msg: '背包满了' }
         }
-        const name = CROPS[harvested.cropId].name
-        return { ok: true, msg: `收获了 ${name}`, sfx: 'harvest' }
+        return { ok: true, msg: `收获了 ${CROPS[harvested.cropId].name}`, sfx: 'harvest' }
       }
       if (world.clearWeed(x, y)) {
         if (!this.spendEnergy(1)) return { ok: false, msg: '体力不足' }
@@ -123,7 +152,7 @@ export class Player {
     }
 
     if (item.kind === 'crop') {
-      return { ok: false, msg: '去皮埃尔商店卖掉作物吧' }
+      return { ok: false, msg: '对着屋外棕色出货箱放入，或去商店卖掉' }
     }
 
     return { ok: false, msg: '无法使用' }
@@ -148,8 +177,7 @@ export class Player {
     for (let i = 0; i < this.inventory.length; i++) {
       const it = this.inventory[i]
       if (it && it.kind === 'crop') {
-        const price = CROPS[it.cropId].sellPrice
-        earned += price * it.qty
+        earned += (it.sellPrice || CROPS[it.cropId]?.sellPrice || 0) * it.qty
         count += it.qty
         this.inventory[i] = null
       }
@@ -169,18 +197,9 @@ export class Player {
     return false
   }
 
-  nearShop(world) {
+  nearShop() {
     const cx = Math.floor(this.x)
     const cy = Math.floor(this.y)
-    for (let dy = -1; dy <= 1; dy++) {
-      for (let dx = -1; dx <= 1; dx++) {
-        if (world.get(cx + dx, cy + dy) === TILE.SHOP || world.get(cx + dx, cy + dy) === TILE.FLOOR) {
-          // shop area roughly x>=24
-          if (cx + dx >= 24 && cy + dy <= 5) return true
-        }
-      }
-    }
-    // simpler: standing on path near shop door
     return cx >= 25 && cx <= 27 && cy >= 4 && cy <= 6
   }
 

@@ -1,10 +1,10 @@
 import { World, TILE } from './world.js'
 import { Player } from './player.js'
-import { Renderer } from './render.js'
+import { Renderer, drawItemIcon } from './render.js'
 import { AudioBus } from './audio.js'
 import { CROPS, SHOP_SEEDS } from './crops.js'
 
-const SAVE_KEY = 'stardew-farm-web-v1'
+const SAVE_KEY = 'stardew-farm-web-v2'
 
 const canvas = document.getElementById('game')
 const renderer = new Renderer(canvas)
@@ -123,12 +123,26 @@ function updateHUD() {
   p.inventory.forEach((item, i) => {
     const el = document.createElement('div')
     el.className = 'slot' + (i === p.selected ? ' selected' : '')
-    el.innerHTML = `
-      <span class="key">${i + 1}</span>
-      <span class="icon">${item ? item.emoji : ''}</span>
-      <span class="name">${item ? item.name.slice(0, 4) : ''}</span>
-      ${item && item.kind !== 'tool' && item.qty ? `<span class="qty">${item.qty}</span>` : ''}
-    `
+    const icon = document.createElement('canvas')
+    icon.className = 'icon-canvas'
+    icon.width = 28
+    icon.height = 28
+    drawItemIcon(icon, item)
+    const key = document.createElement('span')
+    key.className = 'key'
+    key.textContent = String(i + 1)
+    const name = document.createElement('span')
+    name.className = 'name'
+    name.textContent = item ? item.name.slice(0, 4) : ''
+    el.appendChild(key)
+    el.appendChild(icon)
+    el.appendChild(name)
+    if (item && item.kind !== 'tool' && item.qty) {
+      const qty = document.createElement('span')
+      qty.className = 'qty'
+      qty.textContent = String(item.qty)
+      el.appendChild(qty)
+    }
     ui.hotbar.appendChild(el)
   })
 }
@@ -140,7 +154,7 @@ function buildShop() {
     const el = document.createElement('div')
     el.className = 'shop-item'
     el.innerHTML = `
-      <div class="title">${c.harvestEmoji} ${c.seedName}</div>
+      <div class="title"><span style="display:inline-block;width:12px;height:12px;border-radius:50%;background:${c.color};vertical-align:middle;margin-right:6px"></span>${c.seedName}</div>
       <div class="desc">${c.description}<br/>生长 ${c.daysToGrow} 天 · 售价 ${c.sellPrice}G</div>
       <div class="price">${c.seedPrice} G</div>
     `
@@ -169,6 +183,11 @@ function closeShop() {
 }
 
 function sleep() {
+  const shipping = game.world.settleShipping()
+  if (shipping.earned > 0) {
+    game.player.gold += shipping.earned
+    audio.play('coin')
+  }
   const grown = game.world.advanceDay()
   game.player.day += 1
   game.player.minutes = 6 * 60
@@ -178,6 +197,7 @@ function sleep() {
     <div>新的一天：<strong>春日 ${game.player.day}</strong></div>
     <div>体力已恢复至满值。</div>
     <div>${unique.length ? `长大的作物：${unique.join('、')}` : '昨晚没有作物长大（记得浇水哦）。'}</div>
+    <div>${shipping.earned > 0 ? `出货箱结算：+${shipping.earned} G（${shipping.count} 件）` : '出货箱是空的。'}</div>
     <div style="margin-top:8px;opacity:.8">农场存档已自动保存。</div>
   `
   ui.sleep.classList.remove('hidden')
@@ -267,7 +287,8 @@ function loop(now) {
 
   if (!game.paused) {
     movePlayer(dt)
-    // time passes: 1 real second = 1 in-game minute * 0.75 pace
+    game.world.updateChicken(dt)
+    // time passes: ~0.75s real = 1 in-game minute
     game.timeAcc += dt
     while (game.timeAcc >= 0.75) {
       game.timeAcc -= 0.75
@@ -329,7 +350,7 @@ window.addEventListener('keydown', (e) => {
 
   if (e.code === 'KeyE' && game.running) {
     if (!ui.shop.classList.contains('hidden')) closeShop()
-    else if (!game.paused && game.player.nearShop(game.world)) openShop()
+    else if (!game.paused && game.player.nearShop()) openShop()
     else if (!game.paused) {
       toast('走到右上角杂货店门口再按 E')
       audio.play('error')
